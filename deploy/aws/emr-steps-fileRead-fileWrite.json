@@ -1,0 +1,20 @@
+[
+  {
+    "Type": "Spark",
+    "Name": "event-consolidation (pipeline_fileRead-fileWrite)",
+    "ActionOnFailure": "CONTINUE",
+    "Args": [
+      "--class", "com.qwshen.etl.Launcher",
+      "--master", "yarn",
+      "--deploy-mode", "cluster",
+      "--driver-memory", "4g",
+      "--executor-memory", "8g",
+      "--files", "s3://spark-etl-migration-demo/v1/pipelines/pipeline_fileRead-fileWrite.xml,s3://spark-etl-migration-demo/v1/conf/application-cloud.conf,s3://spark-etl-migration-demo/v1/scripts/transform-user-train.sql",
+      "s3://spark-etl-migration-demo/v1/lib/spark-etl-framework_3.5_2.12-1.0.1-jar-with-dependencies.jar",
+      "--pipeline-def", "pipeline_fileRead-fileWrite.xml",
+      "--application-conf", "application-cloud.conf",
+      "--staging-uri", "s3a://spark-etl-migration-demo/v1/staging/events",
+      "--staging-actions", "load train_csv,load train,transform users-train"
+    ]
+  }
+]
