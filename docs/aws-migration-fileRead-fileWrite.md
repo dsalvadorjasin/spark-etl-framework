@@ -6,15 +6,15 @@ YARN) for exercising the EMR step definition without AWS.
 
 ## Path mapping
 
-| On-prem (`conf/application-onprem.conf`) | Cloud (`conf/application-cloud.conf`) |
+| On-prem (`conf/application-onprem.conf`) | Cloud (`conf/application-cloud.conf` or step args) |
 |---|---|
 | `/tmp/events/data/users` | `s3a://spark-etl-migration-demo/v1/input/users` |
 | `/tmp/events/data/events` | `s3a://spark-etl-migration-demo/v1/input/events` |
 | `/tmp/events/data/train` | `s3a://spark-etl-migration-demo/v1/input/train` |
 | `/tmp/events/features` | `s3a://spark-etl-migration-demo/v1/output/features` |
 | `/tmp/events/scripts` | `.` (container working dir, via `--files`) |
-| `--staging-uri` `/tmp/staging/events` | `s3a://spark-etl-migration-demo/v1/staging/events` |
-| `/tmp/metrics/events` | `s3a://.../v1/metrics/events` (only if metrics enabled) |
+| `/tmp/staging/events` (XML `staging_uri`) | `s3a://spark-etl-migration-demo/v1/staging/events` |
+| `/tmp/metrics/events` (XML `metrics_uri`) | `s3a://spark-etl-migration-demo/v1/metrics/events` (only if metrics enabled) |
 
 ## Files added
 
@@ -41,7 +41,7 @@ rewritten to `spark.hadoop.<key>` by `Launcher.createSparkSession`).
 
 ## Secrets
 
-- No credentials are stored in any file. On-prem confs use `${?DB_PASSWORD}` /
+- No credentials are stored in any file. Both confs use `${?DB_PASSWORD}` /
   `${?FLIGHT_PASSWORD}` / `${?DECRYPTION_KEY}` — optional substitutions that simply
   disappear when unset; **this job does not need any of them** (no JDBC/Flight/encrypted
   variables are exercised).
@@ -86,18 +86,30 @@ aws s3 cp src/test/resources/pipelines/pipeline_fileRead-fileWrite.xml s3://spar
 aws s3 cp conf/application-cloud.conf                s3://spark-etl-migration-demo/v1/conf/
 ```
 
-Option A — new cluster (Spark 3.5 ⇒ EMR 7.x):
+Option A — new cluster with auto-terminate (Spark 3.5 ⇒ EMR 7.x; set `EMR_RELEASE` to an `emr-7.*` label available in us-east-2):
 ```bash
-aws emr create-cluster --release-label emr-7.x   # placeholder: pick the EMR 7.x release available in us-east-2
-  --applications Name=Spark \
-  --instance-type m5.xlarge --instance-count 3 \   # 1 master + 2 core
+aws s3 rm --recursive s3://spark-etl-migration-demo/v1/output/   # clear previous output
+aws emr create-cluster \
+  --name "event-consolidation-cluster" \
+  --release-label "${EMR_RELEASE}" \
+  --region us-east-2 \
+  --applications Name=Spark Name=Hadoop \
+  --instance-groups '[{"InstanceGroupType":"MASTER","InstanceCount":1,"InstanceType":"m5.xlarge"},{"InstanceGroupType":"CORE","InstanceCount":2,"InstanceType":"m5.xlarge"}]' \
   --use-default-roles --auto-terminate \
   --log-uri s3://spark-etl-migration-demo/v1/logs/ \
   --steps file://deploy/aws/emr-steps-fileRead-fileWrite.json
 ```
-Option B — existing cluster: `aws emr add-steps --cluster-id <id> --steps file://deploy/aws/emr-steps-fileRead-fileWrite.json`.
-Monitor with `aws emr describe-step` / `describe-cluster`; driver logs land under `--log-uri`
-or `yarn logs -applicationId <app>` on the master node.
+Option B — existing cluster: `aws emr add-steps --cluster-id <id> --region us-east-2 --steps file://deploy/aws/emr-steps-fileRead-fileWrite.json`.
+
+Monitor with `aws emr list-steps --cluster-id <id> --region us-east-2` and
+`aws emr describe-step --cluster-id <id> --step-id <step> --region us-east-2 --query 'Step.Status.State'`;
+step logs land under `s3://spark-etl-migration-demo/v1/logs/<cluster-id>/steps/<step-id>/`.
+Then download the output (`aws s3 cp --recursive s3://spark-etl-migration-demo/v1/output/ ~/cloud_output/`)
+and run the comparison below.
+
+If a job needs secrets (not this one), add them to the step `Args` as
+`--conf spark.yarn.appMasterEnv.DB_PASSWORD=...` (and `FLIGHT_PASSWORD`, `DECRYPTION_KEY`); the
+confs pick them up through `${?VAR}`.
 
 ## Running in local mock mode (moto S3 + single-node YARN)
 
@@ -138,5 +150,5 @@ JVM and does not forward `mvn -D`). Without the three required `compare.*` props
 - `train.csv`: trailer `TRL|0000028` declares 28 records but the file only has 27 data rows —
   the flat-file reader does not cross-check, so the discrepancy is tolerated.
 - `train.txt` is fixed-length; the `user:1-9` field keeps leading spaces, so only the single
-  9-digit user id (`111840914`) matches `users.csv` ��� 6 rows join, 22 rows carry null
+  9-digit user id (`111840914`) matches `users.csv`: 6 rows join, 22 rows carry null
   user_id/gender/birthyear. This is pre-existing framework behaviour preserved by the migration.
