@@ -14,6 +14,8 @@ To build the project, run
   mvn clean install -DskipTests
 ```
 
+For migrating pipelines to AWS (S3/EMR), including a local moto-S3 + YARN mock mode, see [docs/aws-migration-fileRead-fileWrite.md](docs/aws-migration-fileRead-fileWrite.md).
+
 ### Pipeline definition
 
 The following explains the definition of each section in a pipeline:
